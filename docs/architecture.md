@@ -1,124 +1,137 @@
 # Architecture
 
-## Current system and target topology
+## Current system
 
-The first Xperia H3113 runs a usable Alpine guest under QEMU inside Termux. Android remains locked
-and unrooted. Guest SSH and cgroup v2 work; K3s is blocked by three missing kernel features.
-The second Xperia has not been provisioned. Dashed connections represent planned components.
+The first Xperia runs an unmodified K3s v1.36.4+k3s1 control plane natively inside Termux.
+All native `/readyz` checks passed, including RBAC. The Alpine guest has joined as worker `xa2-01`
+and reached Ready with no taints or pressure. Containerd 2.3.4-k3s1 and a CSINode are present.
+The smoke Pod is 1/1 Running with zero restarts and has returned exact HTTP responses. Later
+NodePort timeouts leave stable availability unresolved. CoreDNS is Running but 0/1 Ready;
+DNS, policy behavior and API-to-kubelet proxy reliability remain unverified.
 
 ```mermaid
 flowchart LR
-    host[T470p management host] -->|SSH over USB and ADB| phone1[Termux on Xperia 1]
-    phone1 --> qemu1[QEMU ARM64 system emulation]
-    qemu1 --> guest1[Alpine guest: SSH and cgroup v2 verified]
-    guest1 -. kernel blocker .-> server[K3s server: not running]
-    host -. setup pending .-> phone2[Termux on Xperia 2: planned]
-    phone2 -.-> guest2[Alpine guest 2: planned]
-    guest2 -.-> node2[K3s agent: planned]
-    server -. guest network unresolved .-> node2
+    host[T470p management and build host] -->|SSH over USB and ADB| termux[Termux on Xperia 1]
+    termux --> control[Native K3s control plane: readyz passed]
+    termux --> qemu[QEMU ARM64 guest]
+    qemu --> worker[Alpine worker: Ready]
+    worker -->|API via 10.0.2.2:16443| control
+    host -. provisioning pending .-> phone2[Xperia 2: unprovisioned]
+    phone2 -.-> worker2[Second worker: planned]
+    worker2 -. network unresolved .-> control
 ```
 
-Both Kubernetes nodes must run on the Xperias. The T470p provides management and artifact
-preparation. The wider hardware inventory comprises the T470p, OnePlus CE3 Lite, two H3113 phones,
-OnePlus CE5 and LG G2; roles for the OnePlus and LG devices are unassigned.
+The two-phone objective requires actual Kubernetes worker nodes on the Xperias. The T470p remains
+a management/build host. The wider inventory also includes OnePlus CE3 Lite, OnePlus CE5 and LG G2;
+roles for those devices are unassigned.
 
-## Guest kernel boundary
+## Native control plane
 
-The inspected Android host exposes mixed cgroup v1/v2 mounts and confines Termux to an unprivileged
-app sandbox. PRoot does not supply real root, kernel namespaces or cgroup isolation. See
-[PRoot limitations](https://github.com/termux/proot-distro#limitations).
+K3s runs as Termux UID 10179 with rootless and agentless server settings. Installed PRoot
+5.1.107.95 runs in passthrough mode using `-r /` and the private state directory as its working
+directory. It provides Linux syscall compatibility without a separate distribution, fake UID,
+fake kernel version or seccomp override. Android seccomp remains at mode `2`.
 
-K3s rootless mode requires delegated pure cgroup v2 and does not currently support multi-node
-rootless clusters. Those restrictions do not meet the observed Android host configuration and
-the two-node objective. See [K3s rootless mode](https://docs.k3s.io/advanced#running-rootless-servers-experimental).
+The observed compatibility failure involved Go executable lookup: Android blocked `faccessat2`.
+PRoot returned `ENOSYS`, allowing Go's normal permission-check fallback. The combined upstream
+rootless/disable-agent path did not create RootlessKit namespaces. This observed control-plane
+path does not establish general rootless multi-node support. The first guest is registered;
+workload networking and the two-phone topology remain unverified.
 
-QEMU full-system emulation supplies a separate kernel and guest-root privileges without rooting
-Android. The working guest has pure cgroup v2 with controllers including `cpu`, `cpuset`, `io`,
-`memory` and `pids`. It uses `mdevd` instead of the incompatible helper-based `mdev` setup.
-See [QEMU system emulation](https://www.qemu.org/docs/master/system/introduction.html).
+The dedicated runit service `agro-k3s-control` supervises the process and bounds its private logs.
+Configuration, data and kubeconfig live under `$HOME/mobile-lab/native-control` in Termux.
+The rootless node-password path is `data/agent/etc/rancher/node` beneath that directory.
+Tokens, credentials and node addresses are private runtime inputs.
 
-## Boot artifacts and resources
+An explicit phone IPv4 node address is required because Android default-route discovery fails.
+The API binds phone `127.0.0.1:16443`, advertises `10.0.2.2`, and includes `127.0.0.1` and
+`10.0.2.2` in its TLS SANs. Its egress selector mode is `cluster`. The advertised address is the
+QEMU SLIRP host gateway used by the local guest, not a cross-phone route.
 
-[termux-kernel-start.sh](../scripts/termux-kernel-start.sh) defines the current boot profile:
+## Linux worker boundary
 
-| Setting | Value |
+PRoot does not provide the real namespaces and privileged kernel operations needed for the
+worker. QEMU supplies a separate Linux kernel and guest-root privileges while Android remains
+locked and unrooted. See [PRoot limitations](https://github.com/termux/proot-distro#limitations)
+and [QEMU system emulation](https://www.qemu.org/docs/master/system/introduction.html).
+
+| Guest setting | Current worker profile |
 |---|---|
-| QEMU | 11.0.3; machine `virt`, GICv3 |
-| CPU and acceleration | `max,pauth-impdef=on`; multithreaded TCG, 256 MiB translation buffer |
-| Guest resources | Two vCPUs, 1024 MiB RAM |
-| Kernel | Linux 7.1.5 from the pinned Podroid v1.2.9 artifact; `CONFIG_HZ=100` |
-| Boot method | Direct `-kernel`; root `/dev/vda2`, ext4, serial console `ttyAMA0` |
+| Emulator | QEMU 11.0.3; machine `virt`, GICv3 |
+| CPU and acceleration | `max,pauth-impdef=on`; two vCPUs; multithreaded TCG with a 128 MiB translation buffer |
+| Guest memory | 768 MiB |
+| Kernel | Built upstream Linux 7.1.5-agro1, HZ 100 and eleven additional network built-ins |
 | Root image | Official Alpine 3.24.1 tiny aarch64 cloud image |
-| Guest disk | Writable 4 GiB qcow2 overlay over the verified cloud base image |
-| Initial configuration | NoCloud seed with hostname, `alpine` user and an Ed25519 public key |
+| Boot | Direct kernel; ext4 root `/dev/vda2`; serial console `ttyAMA0` |
+| Disk | Existing 4 GiB qcow2 overlay; root filesystem manually expanded to 3.7 GiB |
+| Guest facilities | Pure cgroup v2, `mdevd`, key-only SSH as `alpine` and `doas` |
 
-The kernel preparer checks the APK and extracted Image hashes, ARM64 image format and selected
-built-in kernel features. The APK is only an extraction source and has never been installed on
-Android. These checks do not establish a reproducible build or a verified upstream attestation.
-The initial feature gate also does not cover every requirement checked by K3s.
+The worker reuses the existing disk and built kernel. Its K3s kernel check passed with exit `0`;
+the measured run took 442 seconds. Worker capacity under emulation remains unproven. The
+[K3s requirements](https://docs.k3s.io/installation/requirements) distinguish server and worker
+baselines and exclude application resource usage.
 
-The overlay preserves the base image, which must remain at its referenced relative path.
-The launcher expands the virtual disk to 4 GiB when creating it; guest partition and filesystem
-expansion were separate manual operations. The measured root filesystem is now 3.7 GiB with
-approximately 3.1 GiB available after K3s extracted its assets.
+## Kernel build and artifact validation
 
-The current memory allocation remains below the K3s server baseline of 2 GB RAM. Its documented
-CPU minimum is two cores, and baseline resources exclude application workloads. Two emulated
-vCPUs do not establish adequate performance. See [K3s requirements](https://docs.k3s.io/installation/requirements).
+[build-kernel.sh](../scripts/build-kernel.sh) compiles pinned Linux 7.1.5 source using the
+[cross-compilation image](../docker/kernel-builder.Dockerfile), an extracted baseline configuration
+and [eleven network additions](../config/k3s-kernel.config). Configuration is resolved and checked
+before compilation in a container limited to three CPUs and 4 GiB RAM with networking disabled.
 
-## Kubernetes blocker
+The completed `7.1.5-agro1` Image is 63,461,888 bytes with SHA-256
+`257e234ec595d1d51ff3935d9e52500267d70c48f37b7bb47d180b6db338902d`.
+Its embedded configuration matches the built configuration. The guest boot and K3s configuration
+check passed. Metadata records artifact and input hashes and toolchain versions; bitwise
+reproducibility and upstream attestation remain unverified.
 
-The verified K3s v1.36.4+k3s1 binary runs, but `check-config` exits `4` because these required options
-are missing from the current kernel:
+The launcher validates `Image`, `kernel.config` and `build-metadata.json` together before side
+effects. It checks source/baseline identity, the release, hashes, ARM64 format and required
+built-ins. Its no-argument path retains the earlier extracted baseline kernel, which lacks three
+K3s requirements. The current worker uses the built-kernel directory argument.
 
-- `CONFIG_IP_NF_TARGET_REJECT`
-- `CONFIG_NETFILTER_XT_MATCH_MULTIPORT`
-- `CONFIG_NETFILTER_XT_MATCH_STATISTIC`
+## Why the control plane moved out of the VM
 
-A compatible replacement kernel has not yet been verified. There is no running K3s service,
-Ready node or validated Pod. Successful guest boot and cgroup setup do not establish Kubernetes
-readiness.
+Full K3s in the two-vCPU/1 GiB TCG guest repeatedly encountered authentication and controller
+bootstrap timeouts. A guest-based agentless API became ready once, then its controller manager
+timed out and restarted. No out-of-memory event was found.
 
-The replacement build route uses [build-kernel.sh](../scripts/build-kernel.sh) and the
-[cross-compilation image](../docker/kernel-builder.Dockerfile). It starts from checksum-pinned
-Linux 7.1.5 source and the extracted baseline configuration, then applies eleven built-in network
-options from [k3s-kernel.config](../config/k3s-kernel.config). The script resolves and validates
-the resulting configuration before compiling the ARM64 Image in a container limited to three
-CPUs and 4 GiB RAM with networking disabled. The source build is in progress; its final output
-and guest behavior remain unverified. Build metadata records hashes and toolchain versions,
-without establishing bitwise reproducibility or an upstream attestation.
+A public-input scrypt probe using Go 1.26.7 and effective `golang.org/x/crypto` v0.47.0 recorded
+0.858 seconds in native Termux and 14.501 seconds in the guest for two calls with
+`N=32768`, `r=8`, `p=1` and a 64-byte result. Each environment has one sample and different available
+CPU counts. This comparison supports investigation of emulation overhead; it is not a general
+performance ratio or proof of the sole cause of every timeout.
 
-The launcher accepts an optional directory containing `Image`, `kernel.config` and
-`build-metadata.json`. Before creating an overlay or starting QEMU, it validates the expected
-source and baseline hashes, release `7.1.5-agro1`, Image/configuration hashes, ARM64 format and
-required built-in options including HZ 100. These are local artifact consistency checks. The
-no-argument path retains the extracted baseline kernel; replacement-kernel boot remains pending.
+## Networking, recovery and scope
 
-## Networking and failure domains
+The guest API host forward has been removed so the native control plane owns phone port 16443.
+Guest SSH, serial-console and HTTP forwards are unchanged. Worker registration verifies the local
+guest-to-control API route. Direct Pod HTTP and guest, phone and laptop forwarding paths each
+returned the expected response at least once. Sustained availability and the future cross-phone
+data network need separate tests.
 
-Management SSH and the QEMU service forwards bind to phone loopback. Device-specific ADB forwards
-provide management-host access. Guest networking uses QEMU user-mode NAT; the
-[runbook](runbook.md) lists the ports. A forwarded Kubernetes API would not establish cross-node
-routing or pod-network connectivity.
+Earlier QEMU/SSH checks survived an ADB transport interruption and retained the same guest boot
+ID at two screen-off observations. The native control plane subsequently survived a USB outage
+with the same service process for over 42 minutes and passed all readiness checks after recovery.
+In a later controlled 30-second outage of the dedicated ADB server, Pod identity, container
+identity, restart count and readiness were preserved on reconnection. Phone HTTP probes timed
+out both during and after that test, so service continuity failed. Later phone/laptop NodePort
+probes and an API-to-kubelet TLS handshake also timed out at ten seconds. Their cause is unresolved;
+the evidence does not establish CPU or USB as the cause. Android reboot and power loss remain untested.
 
-QEMU and guest SSH survived an actual ADB transport loss and subsequent recovery. This measures
-management-transport independence during that event. Two screen-off samples taken 341 seconds
-apart retained the same guest boot ID and unchanged Android wake/sleep timestamps. Android reboot,
-power loss, longer-duration operation, thermal limits and cross-phone network recovery remain
-separate tests.
+There is one control plane and no high-availability claim. The
+[smoke manifest](../manifests/smoke.yaml) passed server validation and was applied, but its initial
+180-second rollout timed out. The first Pod sandbox exceeded the default four-minute deadline.
+An experimental [kubelet drop-in](../config/kubelet-tcg.conf) sets the runtime request timeout to
+five minutes, yielding a ten-minute sandbox deadline in the pinned implementation. Smoke later
+reached Running, but the setting's effect and sustained workload behavior are unverified. This
+is not an upstream TCG recommendation. See
+[CRI timeout handling](https://github.com/k3s-io/kubernetes/blob/5f3efbf9f6b592422439471c5fe1a1ab2887e189/staging/src/k8s.io/cri-client/pkg/remote_runtime.go#L220-L238).
 
-The planned topology has one K3s server with SQLite and one agent. It has a single control-plane
-failure domain; embedded-etcd high availability requires at least three servers. See
-[K3s datastores](https://docs.k3s.io/datastore) and
-[embedded-etcd HA](https://docs.k3s.io/datastore/ha-embedded).
+The [air-gap preparer](../scripts/prepare-airgap.py) derives a smaller archive for BusyBox, pause
+and CoreDNS from the pinned official archive. It retains the original image pins and ARM64 blobs;
+unchanged root image indexes still contain upstream non-ARM descriptors. Runtime import and any
+speed improvement from this subset remain unverified.
 
-## Workload boundary
-
-The prepared [smoke manifest](../manifests/smoke.yaml) defines a non-root BusyBox HTTP Deployment
-with a read-only root filesystem, a memory-backed content volume and NodePort 30080. Its image is
-pinned by digest from the verified official air-gap archive. The YAML has been parsed offline;
-the manifest has not been applied and no Pod or service response has been verified.
-
-The current system is a guest and Kubernetes compatibility experiment. The reception panel is a
-[future workload specification](reception-target.md). Business workloads, existing data and
-production credentials remain off the phones.
+The [network-policy fixture](../manifests/network-policy-probe.yaml) has not been applied. All
+business workloads remain outside the lab; the [reception panel](reception-target.md) is a future
+specification only.

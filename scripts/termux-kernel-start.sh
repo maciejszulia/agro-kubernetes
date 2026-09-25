@@ -76,14 +76,14 @@ termux-wake-lock
 qemu-system-aarch64 \
     -name xa2-01-hz100 \
     -machine virt,gic-version=3 \
-    -accel tcg,thread=multi,tb-size=256 \
-    -cpu max,pauth-impdef=on -smp 2 -m 1024 \
+    -accel tcg,thread=multi,tb-size=128 \
+    -cpu max,pauth-impdef=on -smp 2 -m 768 \
     -kernel "$kernel" \
     -append 'root=/dev/vda2 rootfstype=ext4 rw rootwait console=ttyAMA0,115200' \
     -drive "if=none,id=rootdisk,format=qcow2,file=$state/root.qcow2" \
     -device virtio-blk-pci,drive=rootdisk,serial=agro-kubernetes-xa201 \
     -drive "if=virtio,format=raw,readonly=on,file=$cloud/seed.iso" \
-    -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:10022-:22,hostfwd=tcp:127.0.0.1:16443-:6443,hostfwd=tcp:127.0.0.1:10080-:30080 \
+    -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:10022-:22,hostfwd=tcp:127.0.0.1:10080-:30080 \
     -device virtio-net-pci,netdev=net0 \
     -device virtio-rng-pci \
     -display none \

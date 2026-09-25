@@ -62,6 +62,9 @@ resource requirements on an emulated Xperia remain unmeasured.
   Sources: `backend/src/services/website-booking-sync-runner.ts`,
   `backend/src/services/website-occupancy-runner.ts`.
 
-The first phone now has a usable Alpine guest, but K3s remains blocked by missing kernel options.
-Workload deployment still depends on verified Kubernetes nodes, adequate resources, persistent
-storage and recovery tests. No business workload is present on either phone.
+The first phone's native Termux control plane passes its readiness checks and the guest worker
+is Ready. The smoke Pod has served exact HTTP responses, but later requests timed out despite
+readiness. CoreDNS remains 0/1 Ready; stable HTTP, DNS and policy behavior are unverified.
+Reception deployment still requires sustained availability, adequate resources, persistent
+storage and recovery tests. No business workload is present on
+either phone.

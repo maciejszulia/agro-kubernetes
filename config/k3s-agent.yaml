@@ -1,0 +1,8 @@
+node-name: xa2-01
+data-dir: /var/lib/rancher/k3s-native-agent
+server: https://10.0.2.2:16443
+token-file: /etc/rancher/k3s/native-agent-token
+lb-server-port: 7444
+resolv-conf: /etc/resolv.conf
+kube-proxy-arg:
+  - proxy-mode=iptables
