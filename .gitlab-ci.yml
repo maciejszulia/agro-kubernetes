@@ -1,0 +1,16 @@
+image: python:3.11-slim-bookworm
+
+stages:
+  - verify
+
+verify:
+  stage: verify
+  before_script:
+    - apt-get update
+    - apt-get install --yes --no-install-recommends curl libarchive-tools openssh-client
+  script:
+    - python -B -m unittest discover -s tests -v
+    - for script in scripts/*.sh; do bash -n "$script" || exit; done
+    - sh -n scripts/guest-install.sh
+    - sh -n scripts/xa2-ssh
+    - sh -n scripts/xa2-guest-ssh

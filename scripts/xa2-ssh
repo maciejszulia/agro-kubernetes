@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+state="${XDG_STATE_HOME:-$HOME/.local/state}/mobile-lab/xa2-01"
+exec ssh -F /dev/null \
+    -i "$state/access_ed25519" -p 18022 \
+    -o IdentitiesOnly=yes -o BatchMode=yes \
+    -o StrictHostKeyChecking=yes \
+    -o "UserKnownHostsFile=$state/known_hosts" \
+    -o ConnectTimeout=10 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    u0_a179@127.0.0.1 "$@"
