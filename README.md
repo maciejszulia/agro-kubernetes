@@ -1,8 +1,12 @@
 # agro-kubernetes
 
+[Polski](README.pl.md)
+
 A hobby Kubernetes lab exploring two Sony Xperia H3113 phones as real cluster nodes while retaining
 locked, unrooted Android. QEMU supplies a separate ARM64 Linux kernel on each phone. The experiment
 focuses on resource limits, guest networking and recovery after management disconnections.
+
+![A T470p drives two unrooted Xperia phones over ADB and SSH. QEMU runs an Alpine guest on phone 1; K3s starts, but check-config reports 3 missing kernel options.](docs/diagrams/architecture.svg)
 
 ## Current status
 
@@ -82,3 +86,7 @@ longer-duration screen-off operation and two-node networking remain untested.
 
 The [reception panel](docs/reception-target.md) is a future workload specification only.
 All business applications, existing data, services and production credentials remain off the phones.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
