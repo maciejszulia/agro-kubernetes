@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install curl, bsdtar and ssh-keygen used by the tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl libarchive-tools openssh-client
+      - name: Unit tests
+        run: python3 -B -m unittest discover -s tests -v
+      - name: Shell syntax
+        run: |
+          for script in scripts/*.sh; do bash -n "$script" || exit; done
+          sh -n scripts/guest-install.sh
+          sh -n scripts/xa2-ssh
+          sh -n scripts/xa2-guest-ssh
