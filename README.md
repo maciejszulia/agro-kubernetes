@@ -90,3 +90,7 @@ All business applications, existing data, services and production credentials re
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Documentation
+
+- [Architecture documentation (arc42, diagrams, ADRs)](docs/architecture/README.md)
